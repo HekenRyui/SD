@@ -1,5 +1,3 @@
-from google.colab import drive
-drive.mount('/content/drive')
 import os 
 import random
 import uuid
@@ -12,38 +10,20 @@ from diffusers import StableDiffusionXLPipeline, EulerDiscreteScheduler
 MAX_SEED = np.iinfo(np.int32).max
 SAVE_DIR = "/content/images"
 MODELS_PATH = "/content/drive/MyDrive/StableDiffusion/models"
-DEFAULT_MODEL_PATH = f'{MODELS_PATH}/model_deffault.safetensors'
+MODEL_PATH = f'{MODELS_PATH}/model_deffault.safetensors'
 
 # Setup
 os.makedirs(SAVE_DIR, exist_ok=True)
-os.makedirs(MODELS_PATH, exist_ok=True)  # Ensure the models path exists
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Load default model
-os.system(f'wget -O {DEFAULT_MODEL_PATH} "https://civitai.com/api/download/models/128078?type=Model&format=SafeTensor&size=pruned&fp=fp16"')
-pipe = StableDiffusionXLPipeline.from_single_file(DEFAULT_MODEL_PATH, use_safetensors=True, torch_dtype=torch.float16).to(device)
+# Load model
+os.system(f'wget -O {MODEL_PATH} "https://civitai.com/api/download/models/128078?type=Model&format=SafeTensor&size=pruned&fp=fp16"')
+
+pipe = StableDiffusionXLPipeline.from_single_file(MODEL_PATH, use_safetensors=True, torch_dtype=torch.float16).to(device)
 pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
-print("\033[1;32mDefault Model Loaded!\033[0m")
+print("\033[1;32mDone!\033[0m")
 
-# Initialize a global list to store generated image paths
-generated_images = []
 
-# Download model function
-def download_model(url):
-    model_filename = url.split("/")[-1]
-    model_path = os.path.join(MODELS_PATH, model_filename)
-    os.system(f'wget -O {model_path} "{url}"')
-    return f"Model downloaded: {model_path}"
-
-# Load selected model
-def load_model(model_name):
-    model_path = os.path.join(MODELS_PATH, model_name)
-    global pipe  # We will reinitialize the pipeline
-    pipe = StableDiffusionXLPipeline.from_single_file(model_path, use_safetensors=True, torch_dtype=torch.float16).to(device)
-    pipe.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config)
-    return f"Model loaded: {model_name}"
-
-# Infer function
 def infer(prompt, negative_prompt, seed, width, height, guidance_scale, num_inference_steps):
     if seed == -1:  # -1 indicates random seed
         seed = random.randint(0, MAX_SEED)
@@ -63,17 +43,22 @@ def infer(prompt, negative_prompt, seed, width, height, guidance_scale, num_infe
     image_path = os.path.join(SAVE_DIR, image_filename)
     image.save(image_path)
     
-    # Add the new image to the list of generated images
-    generated_images.append(image_path)
-    
-    return image, generated_images
+    return image, image_filename  # Return image and filename
 
-# Get available models
-def get_available_models():
-    models = [f for f in os.listdir(MODELS_PATH) if f.endswith(".safetensors")]
-    if not models:
-        models.append('No models available')
-    return models
+
+def download_model(url):
+    try:
+        model_name = url.split("/")[-1]
+        model_save_path = os.path.join(MODELS_PATH, model_name)
+        os.system(f'wget -O {model_save_path} "{url}"')
+        return f"Model downloaded: {model_save_path}"
+    except Exception as e:
+        return f"Error downloading model: {str(e)}"
+
+
+def get_model_list():
+    return [f for f in os.listdir(MODELS_PATH) if f.endswith('.safetensors')]
+
 
 # UI setup
 css = """
@@ -84,17 +69,14 @@ css = """
 footer {
     display: none !important;
 }
-#image-grid {
+.image-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    grid-gap: 10px;
-    margin-top: 20px;
+    gap: 10px;
 }
-#image-grid img {
+.image-grid img {
     width: 100%;
     height: auto;
-    object-fit: cover;
-    border-radius: 8px;
 }
 """
 
@@ -117,10 +99,10 @@ with gr.Blocks(css=css, theme='ParityError/Interstellar') as app:
                 prompt = gr.Text(label="Prompt", show_label=False, lines=1, max_lines=7,
                                  placeholder="Enter your prompt", container=False, scale=4)
                 run_button = gr.Button("🚀 Run", scale=1, variant='primary')
-        
-        result = gr.Image(label="Result", show_label=False)
+
         gr.Examples(examples=examples, inputs=[prompt])
-        
+        result = gr.Image(label="Result", show_label=False)
+
         with gr.Group():
             with gr.Accordion("⚙️ Settings", open=False):
                 negative_prompt = gr.Text(label="Negative prompt", placeholder="Enter a negative prompt",
@@ -135,38 +117,28 @@ with gr.Blocks(css=css, theme='ParityError/Interstellar') as app:
                 with gr.Row():
                     guidance_scale = gr.Slider(label="Guidance scale", minimum=0.0, maximum=10.0, step=0.1, value=5.0)
                     num_inference_steps = gr.Slider(label="Steps", minimum=1, maximum=50, step=1, value=20)
-        
-        with gr.Accordion("⚙️ Advanced", open=False):
-            with gr.Row():
-                model_url = gr.Textbox(label="Model URL", placeholder="Enter URL to download model")
-                download_button = gr.Button("Download Model")
-            download_status = gr.Textbox(label="Download Status", interactive=False)
-            
-            download_button.click(
-                fn=download_model,
-                inputs=[model_url],
-                outputs=[download_status]
-            )
-            
-            available_models = gr.Dropdown(label="Select Model", choices=get_available_models(), value="model_deffault.safetensors")
-            load_button = gr.Button("Load Model")
-            load_status = gr.Textbox(label="Load Status", interactive=False)
-            
-            load_button.click(
-                fn=load_model,
-                inputs=[available_models],
-                outputs=[load_status]
-            )
 
-        # Section to display the generated image gallery
-        gr.Markdown("# Generated Images")
-        image_gallery = gr.Gallery(elem_id="image-grid").style(grid=[3], height="auto")
-        
-    run_button.click(
-        fn=infer,
-        inputs=[prompt, negative_prompt, seed, width, height, guidance_scale, num_inference_steps],
-        outputs=[result, image_gallery],
-    )
+        with gr.Accordion("⚙️ Advanced", open=False):
+            model_url = gr.Textbox(label="Model URL", placeholder="Enter the model URL here")
+            download_button = gr.Button("Download Model")
+            download_output = gr.Textbox(label="Download Status", interactive=False)
+
+            model_selector = gr.Dropdown(label="Select Model", choices=get_model_list(), value=MODEL_PATH.split("/")[-1])
+            model_selector.change(fn=lambda x: os.path.join(MODELS_PATH, x), inputs=model_selector, outputs=None)
+
+            image_list = gr.Gallery(label="Generated Images", show_label=False, elem_id="image-gallery").style(grid=3)
+
+        run_button.click(
+            fn=infer,
+            inputs=[prompt, negative_prompt, seed, width, height, guidance_scale, num_inference_steps],
+            outputs=[result, image_list],
+        )
+
+        download_button.click(
+            fn=download_model,
+            inputs=model_url,
+            outputs=download_output,
+        )
 
 if __name__ == "__main__":
     app.launch(share=True, inline=False, inbrowser=False, debug=True)
