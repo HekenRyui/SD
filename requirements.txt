@@ -1,0 +1,8 @@
+gradio
+diffusers
+transformers
+accelerate
+scipy
+torch
+numpy
+Pillow
